@@ -75,6 +75,7 @@ class ColorAnalyzer:
         kernel_size: int,
         min_area_ratio: float,
         agg_density_thresh: float,
+        max_area_ratio: float = None,
         debug_mode: bool = False,
     ) -> np.ndarray:
         """
@@ -92,6 +93,8 @@ class ColorAnalyzer:
             agg_density_thresh (float): The minimum density (0.0-1.0) of original matched pixels
                                         within an aggregated component for it to be kept. This
                                         prevents over-aggregation of sparse regions.
+            max_area_ratio (float, optional): The maximum area a connected component can have, as a ratio
+                                            of the total image area, to be kept. Defaults to 0.1 (10% of image area).
             debug_mode (bool, optional): If True, prints debug information to the console.
 
         Returns:
@@ -114,6 +117,13 @@ class ColorAnalyzer:
 
         for i in range(1, num_labels):
             component_area = stats[i, cv2.CC_STAT_AREA]
+
+            # Max area check
+            if max_area_ratio is not None and component_area > total_image_area * max_area_ratio:
+                if debug_mode:
+                    print(f"[DEBUG]   Filtered out component {i} with area {component_area} (too large).")
+                continue
+
             if component_area >= total_image_area * min_area_ratio:
                 component_mask = (labels == i).astype(np.uint8) * 255
 
@@ -195,6 +205,7 @@ class ColorAnalyzer:
         aggregate_mode: bool = False,
         agg_kernel_size: int = 7,
         agg_min_area: float = 0.0005,
+        agg_max_area: float = None,
         agg_density_thresh: float = 0.5,
         use_alpha: bool = True,
     ) -> dict:
@@ -215,6 +226,7 @@ class ColorAnalyzer:
             aggregate_mode (bool, optional): If True, aggregates matched pixel areas.
             agg_kernel_size (int, optional): Kernel size for aggregation dilation. Defaults to 7.
             agg_min_area (float, optional): Minimum area ratio for aggregation components. Defaults to 0.0005.
+            agg_max_area (float, optional): Maximum area ratio for aggregation components. Defaults to 0.1 (10% of image area).
             agg_density_thresh (float, optional): Minimum density for aggregated areas. Defaults to 0.5.
             use_alpha (bool, optional): If True, handles images with an alpha channel (4 dimensions).
                                         If False, processes as a 3-channel image. Defaults to True.
@@ -282,6 +294,7 @@ class ColorAnalyzer:
                 kernel_size=agg_kernel_size,
                 min_area_ratio=agg_min_area,
                 agg_density_thresh=agg_density_thresh,
+                max_area_ratio=agg_max_area,
                 debug_mode=debug_mode,
             )
 

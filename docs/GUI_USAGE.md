@@ -39,6 +39,15 @@ This is the primary tab for running the analysis pipeline on a single image.
 
 If you run the GUI in `--debug` mode, a comprehensive set of options appears, allowing you to enable or disable every step of the pipeline (e.g., Color Alignment, Masking, Symmetry Analysis) and configure their parameters.
 
+### Aggregation Parameters
+
+These parameters control how detected color regions are grouped together.
+
+*   **Agg. Kernel Size**: The size of the kernel used for dilation during aggregation. Larger values connect components further apart. (Default: 7)
+*   **Agg. Min Area**: The minimum area a connected component must have, as a ratio of the total image area, to be considered for aggregation. (Default: 0.0005)
+*   **Agg. Max Area**: The maximum area a connected component can have, as a ratio of the total image area, to be kept. This helps prevent over-aggregation of very large, irrelevant areas. (Default: 0.1, or 10% of image area)
+*   **Agg. Density Thresh**: The minimum density (0.0-1.0) of original matched pixels within an aggregated component for it to be kept. This prevents over-aggregation of sparse regions. (Default: 0.5)
+
 ### Running the Analysis
 
 1.  Click **"Run Analysis"**.

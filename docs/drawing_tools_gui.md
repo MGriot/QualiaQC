@@ -24,7 +24,7 @@ pip install pymupdf pillow numpy scipy
 
 ---
 
-## 💻 The Code (save as `color_fill_pdf_tk.py`)
+## 💻 The Code (save as `drawing_tools/gui.py`)
 🧠 How it works (under the hood)
 Render: Uses PyMuPDF to render the selected PDF page at 2× scale for sharper edges.
 Detect lines & regions:
@@ -47,7 +47,7 @@ White-on-black drawings? Use Options → Toggle invert lines if your source has 
 Performance: Very large pages may take a few seconds to segment. Rendering at 2× is a balance between precision and speed—bump to 3× if needed.
 Vector output: Export is image-based (transparent PNG layer). If you need true vector extraction (e.g., SVG paths), we can extend this by tracing region boundaries (Moore neighbor tracing) and writing SVG—happy to add that if you need it.
 ▶️ Usage
-Run: python color_fill_pdf_tk.py
+Run: python -m src.drawing_tools.gui
 File → Open PDF…
 Click inside any closed area to fill it.
 Edit → Pick Color to change fill color.

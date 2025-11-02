@@ -60,6 +60,7 @@ class VisualAnalyzerGUI(tk.Tk):
         self.blur_kernel_var = tk.StringVar(value="5 5")
         self.agg_kernel_size_var = tk.StringVar(value="7")
         self.agg_min_area_var = tk.StringVar(value="0.0005")
+        self.agg_max_area_var = tk.StringVar(value="0.1")
         self.agg_density_thresh_var = tk.StringVar(value="0.5")
         self.color_alignment_var = tk.BooleanVar(value=True)
         self.symmetry_var = tk.BooleanVar(value=True)
@@ -181,6 +182,8 @@ class VisualAnalyzerGUI(tk.Tk):
             tk.Entry(agg_options_frame, textvariable=self.agg_kernel_size_var).pack(anchor=tk.W, fill=tk.X)
             tk.Label(agg_options_frame, text="Agg. Min Area:").pack(anchor=tk.W)
             tk.Entry(agg_options_frame, textvariable=self.agg_min_area_var).pack(anchor=tk.W, fill=tk.X)
+            tk.Label(agg_options_frame, text="Agg. Max Area:").pack(anchor=tk.W)
+            tk.Entry(agg_options_frame, textvariable=self.agg_max_area_var).pack(anchor=tk.W, fill=tk.X)
             tk.Label(agg_options_frame, text="Agg. Density Thresh:").pack(anchor=tk.W)
             tk.Entry(agg_options_frame, textvariable=self.agg_density_thresh_var).pack(anchor=tk.W, fill=tk.X)
 
@@ -188,7 +191,7 @@ class VisualAnalyzerGUI(tk.Tk):
 
     def populate_history_tab(self):
         main_frame = self.history_tab
-        
+
         # Top frame for controls
         controls_frame = ttk.Frame(main_frame)
         controls_frame.pack(fill=tk.X, padx=5, pady=5)
@@ -202,7 +205,7 @@ class VisualAnalyzerGUI(tk.Tk):
         # Treeview for displaying history
         tree_frame = ttk.Frame(main_frame)
         tree_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-        
+
         columns = {
             'date': ("Date", 150),
             'project': ("Project", 100),
@@ -211,7 +214,7 @@ class VisualAnalyzerGUI(tk.Tk):
             'percentage': ("Color %", 70)
         }
         self.history_tree = ttk.Treeview(tree_frame, columns=list(columns.keys()), show="headings")
-        
+
         for col, (text, width) in columns.items():
             self.history_tree.heading(col, text=text, command=lambda c=col: self._sort_history_tree(c, False))
             self.history_tree.column(col, width=width, anchor=tk.W)
@@ -277,7 +280,7 @@ class VisualAnalyzerGUI(tk.Tk):
                     project_name = getattr(saved_data.args, 'project', 'Unknown') if hasattr(saved_data, 'args') else 'Unknown'
                     metadata = getattr(saved_data, 'metadata', {})
                     analysis_results = getattr(saved_data, 'analysis_results', {})
-                
+
                 metadata = metadata if isinstance(metadata, dict) else {}
                 analysis_results = analysis_results if isinstance(analysis_results, dict) else {}
 
@@ -299,14 +302,14 @@ class VisualAnalyzerGUI(tk.Tk):
                 print(f"Could not load or parse {file_path}: {e}")
             progress_bar['value'] = i + 1
             progress_win.update_idletasks()
-        
+
         progress_win.destroy()
         self._apply_history_filters()
 
     def _populate_history_treeview(self, data_to_show):
         for item in self.history_tree.get_children():
             self.history_tree.delete(item)
-        
+
         for item in data_to_show:
             values = (
                 item['date'].strftime("%Y-%m-%d %H:%M"),
@@ -319,7 +322,7 @@ class VisualAnalyzerGUI(tk.Tk):
 
     def _apply_history_filters(self, event=None):
         filters = {key: var.get().lower() for key, var in self.history_filter_vars.items()}
-        
+
         if not any(filters.values()):
             filtered_data = self.history_data
         else:
@@ -336,18 +339,18 @@ class VisualAnalyzerGUI(tk.Tk):
                     match = False
                 if filters['percentage'] and filters['percentage'] not in f"{item['percentage']:.2f}%".lower():
                     match = False
-                
+
                 if match:
                     filtered_data.append(item)
-        
+
         self._populate_history_treeview(filtered_data)
 
     def _sort_history_tree(self, col, reverse):
         data = [self.history_tree.set(child, col) for child in self.history_tree.get_children('')]
-        
+
         # A simple string-based sort; can be improved for numeric/date types
         sorted_data = sorted(self.history_data, key=lambda item: str(item.get(col, '')), reverse=reverse)
-        
+
         self._populate_history_treeview(sorted_data)
         self.history_tree.heading(col, command=lambda: self._sort_history_tree(col, not reverse))
 
@@ -358,7 +361,7 @@ class VisualAnalyzerGUI(tk.Tk):
         selected_items = self.history_tree.selection()
         if not selected_items:
             return
-        
+
         gri_path_str = selected_items[0]
         gri_path = Path(gri_path_str)
 
@@ -510,7 +513,7 @@ class VisualAnalyzerGUI(tk.Tk):
         if not args.image:
             messagebox.showerror("Error", "Please select an image.")
             return
-        
+
         args.part_number = self.part_number_var.get()
         args.thickness = self.thickness_var.get()
         args.author = self.author_var.get()
@@ -523,7 +526,7 @@ class VisualAnalyzerGUI(tk.Tk):
         args.color_alignment = self.color_alignment_var.get()
         args.color_correction_method = self.color_correction_method_var.get()
         args.sample_color_checker = (self.color_checker_path_var.get() if args.color_alignment else None)
-        
+
         if args.color_alignment and not args.sample_color_checker:
             messagebox.showerror("Error", "Please select a color checker image for Color Alignment.")
             return
@@ -548,6 +551,7 @@ class VisualAnalyzerGUI(tk.Tk):
         try:
             args.agg_kernel_size = (int(self.agg_kernel_size_var.get()) if self.agg_kernel_size_var.get() else 7)
             args.agg_min_area = (float(self.agg_min_area_var.get()) if self.agg_min_area_var.get() else 0.0005)
+            args.agg_max_area = (float(self.agg_max_area_var.get()) if self.agg_max_area_var.get() else 0.1)
             args.agg_density_thresh = (float(self.agg_density_thresh_var.get()) if self.agg_density_thresh_var.get() else 0.5)
             if self.blur_kernel_var.get():
                 w, h = map(int, self.blur_kernel_var.get().split())
@@ -562,7 +566,7 @@ class VisualAnalyzerGUI(tk.Tk):
             return
         try:
             messagebox.showinfo("Running Analysis", "Analysis is starting. This may take a moment.")
-            
+
             # Run analysis but don't generate the report yet
             pipeline_instance = run_analysis(args)
 
@@ -598,7 +602,7 @@ class VisualAnalyzerGUI(tk.Tk):
         generate_in_debug = False
         if self.debug_mode:
             generate_in_debug = messagebox.askyesno("Report Type", "Generate a DEBUG report? (Includes extra pages and details)")
-        
+
         pipeline_instance.args.debug = generate_in_debug
 
         try:
