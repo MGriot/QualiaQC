@@ -1,8 +1,8 @@
-# Visual Analyzer
+# QualiaQC
 
 ## Project Description
 
-Visual Analyzer is a powerful Python-based tool for advanced image and video analysis. It provides a comprehensive suite of features for color correction, color zone analysis, image alignment, and symmetry analysis. The tool is designed to be project-based, allowing users to manage different analysis tasks with specific configurations and reference materials. The application is accessible through a Tkinter-based Graphical User Interface (GUI) and a Command-Line Interface (CLI).
+QualiaQC (Qualia, the qualities of a thing + QC for Quality Control) is a powerful Python-based tool for advanced image and video analysis. It provides a comprehensive suite of features for color correction, color zone analysis, image alignment, and symmetry analysis. The tool is designed to be project-based, allowing users to manage different analysis tasks with specific configurations and reference materials. The application is accessible through a Tkinter-based Graphical User Interface (GUI) and a Command-Line Interface (CLI).
 
 ## Core Concepts & Theory
 

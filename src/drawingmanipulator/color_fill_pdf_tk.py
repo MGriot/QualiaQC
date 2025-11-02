@@ -10,8 +10,10 @@ from typing import Dict, Optional, Tuple, Set
 
 import fitz  # PyMuPDF
 import numpy as np
+import cv2
 from PIL import Image, ImageTk, ImageOps, ImageDraw, ImageFont
 from scipy import ndimage as ndi
+from scipy.spatial import cKDTree
 
 
 # -------------------------
@@ -105,6 +107,63 @@ class PageSegmentation:
 # -------------------------
 
 
+def detect_lines(
+    pil_img: Image.Image,
+    dilation_radius: int = 2,
+    invert_lines: bool = False,
+    threshold: Optional[int] = None,
+    poly_epsilon_frac: float = 0.0075, # Epsilon for corner detection
+) -> Tuple[list, int]:
+    """
+    Detects line contours, splitting them at sharp angles.
+    """
+    gray = to_uint8_grayscale(pil_img)
+    # Adaptive thresholding is much better at finding lines of varying intensity.
+    # THRESH_BINARY_INV assumes dark lines on a light background.
+    line_mask_u8 = cv2.adaptiveThreshold(
+        gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 31, 7
+    )
+    # The threshold value `t` is not relevant for adaptive threshold, but we return a placeholder.
+    t = 127
+
+    # The boolean mask is now derived from the adaptive threshold result.
+    line_mask = line_mask_u8 > 0
+
+    if dilation_radius > 0:
+        structure = ndi.generate_binary_structure(2, 2)
+        line_mask = ndi.binary_dilation(
+            line_mask, structure=structure, iterations=dilation_radius
+        )
+    
+    line_mask_u8 = line_mask.astype(np.uint8) * 255
+    # Use RETR_EXTERNAL to get only outer contours of lines, simplifying things
+    contours, _ = cv2.findContours(line_mask_u8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    final_segments = []
+    for contour in contours:
+        # Treat contours as open curves for approximation
+        arc_length = cv2.arcLength(contour, False)
+        if arc_length < 10: # Ignore tiny noise contours
+            continue
+
+        # 1. Find corners using approxPolyDP
+        approx_corners = cv2.approxPolyDP(contour, poly_epsilon_frac * arc_length, False)
+
+        # 2. Create straight-line segments between the found corners
+        if len(approx_corners) > 1:
+            for i in range(len(approx_corners) - 1):
+                p1 = approx_corners[i][0]
+                p2 = approx_corners[i+1][0]
+                
+                # Create a new contour for this single straight segment
+                line_segment = np.array([[p1], [p2]], dtype=np.int32)
+                final_segments.append(line_segment)
+        elif len(contour) > 1: # If it's a blob with no corners, add the original
+            final_segments.append(contour)
+
+    return final_segments, t
+
+
 def segment_closed_regions(
     pil_img: Image.Image,
     dilation_radius: int = 2,
@@ -187,6 +246,11 @@ class ColorFillPDFApp(tk.Tk):
         # UI-linked State Variables
         self.highlights_visible = tk.BooleanVar(value=True)
         self.manual_threshold = tk.IntVar(value=127)
+
+        # Manual line definition mode
+        self.mode = tk.StringVar(value="fill")  # 'fill' or 'define'
+        self.line_contours: list = []
+        self.selected_lines: set = set()
 
         # UI
         self.region_tree: Optional[ttk.Treeview] = None
@@ -293,6 +357,21 @@ class ColorFillPDFApp(tk.Tk):
         tk.Button(left_pane, text="Remove Selected Region(s)", command=self._remove_selected_region).pack(fill=tk.X, padx=5, pady=5)
         tk.Button(left_pane, text="Merge Selected Regions", command=self._merge_selected_regions).pack(fill=tk.X, padx=5, pady=5)
 
+        # -- Mode Selection --
+        mode_frame = tk.LabelFrame(left_pane, text="Interaction Mode")
+        mode_frame.pack(fill=tk.X, padx=5, pady=5)
+        tk.Radiobutton(mode_frame, text="Fill Area", variable=self.mode, value="fill", command=self._on_mode_change).pack(anchor=tk.W)
+        tk.Radiobutton(mode_frame, text="Define by Line", variable=self.mode, value="define", command=self._on_mode_change).pack(anchor=tk.W)
+
+        # -- Manual Definition Actions --
+        self.define_frame = tk.LabelFrame(left_pane, text="Manual Definition")
+        self.define_frame.pack(fill=tk.X, padx=5, pady=5)
+        self.create_area_button = tk.Button(self.define_frame, text="Create Area from Selection", command=self._create_area_from_selection)
+        self.create_area_button.pack(fill=tk.X, pady=2)
+        self.clear_lines_button = tk.Button(self.define_frame, text="Clear Line Selection", command=self._clear_line_selection)
+        self.clear_lines_button.pack(fill=tk.X, pady=2)
+
+
         # -- Segmentation Settings --
         seg_frame = tk.LabelFrame(left_pane, text="Segmentation")
         seg_frame.pack(fill=tk.X, padx=5, pady=5)
@@ -329,6 +408,128 @@ class ColorFillPDFApp(tk.Tk):
         status_bar.pack(fill=tk.X)
 
         self.geometry("1200x900")
+
+    # ---------- Mode Switching and Manual Definition ----------
+
+    def _on_mode_change(self):
+        """Called when the user switches between 'Fill' and 'Define' modes."""
+        mode = self.mode.get()
+        self._clear_line_selection() # Clear selection when changing modes
+        if mode == 'fill':
+            self.canvas.config(cursor="tcross")
+            self.status.set("Mode: Fill Area. Click inside a region to color it.")
+            self.create_area_button.config(state=tk.DISABLED)
+            self.clear_lines_button.config(state=tk.DISABLED)
+        elif mode == 'define':
+            self.canvas.config(cursor="hand2")
+            self.status.set("Mode: Define by Line. Click to select lines.")
+            self.create_area_button.config(state=tk.NORMAL)
+            self.clear_lines_button.config(state=tk.NORMAL)
+        self._refresh_display()
+
+    def _create_area_from_selection(self):
+        """
+        Creates a new fillable region by connecting the endpoints of all selected
+        line segments, then filling the resulting shape while respecting holes.
+        """
+        if len(self.selected_lines) < 1:
+            messagebox.showwarning("Selection Error", "Please select at least one line segment.")
+            return
+
+        if self.base_image is None or self.segmentation is None:
+            return
+
+        max_dist = simpledialog.askinteger(
+            "Connect Gaps", "Enter max distance (pixels) to connect gaps:",
+            initialvalue=20, minvalue=1, maxvalue=200, parent=self
+        )
+        if max_dist is None: return
+
+        self.status.set("Connecting endpoints and creating area...")
+        self.update_idletasks()
+
+        # 1. Create a mask and draw the initially selected segments on it
+        line_mask = np.zeros(self.base_image.size[::-1], dtype=np.uint8)
+        selected_contours = [self.line_contours[i] for i in self.selected_lines]
+        cv2.drawContours(line_mask, selected_contours, -1, 255, 1)
+
+        # 2. Get all unique endpoints from all selected segments
+        endpoints = set()
+        for contour in selected_contours:
+            if len(contour) > 0:
+                endpoints.add(tuple(contour[0][0]))
+                if len(contour) > 1:
+                    endpoints.add(tuple(contour[-1][0]))
+        
+        endpoint_list = list(endpoints)
+        if len(endpoint_list) < 2:
+            messagebox.showwarning("Warning", "Not enough unique endpoints to connect gaps.")
+        else:
+            # 3. Connect all nearby endpoints in a single, robust step
+            kdtree = cKDTree(endpoint_list)
+            close_pairs = kdtree.query_pairs(r=max_dist)
+            
+            if close_pairs:
+                for (i, j) in close_pairs:
+                    p1 = endpoint_list[i]
+                    p2 = endpoint_list[j]
+                    cv2.line(line_mask, p1, p2, 255, 1)
+
+        # 4. Thicken and close the final perimeter to ensure it's watertight
+        kernel = np.ones((3,3), np.uint8)
+        closed_line_mask = cv2.morphologyEx(line_mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+
+        # 5. Find contours and fill the area, respecting holes
+        new_contours, hierarchy = cv2.findContours(closed_line_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+
+        if not new_contours:
+            messagebox.showerror("Error", "Could not form a closed area from the selection.")
+            self.status.set("Area creation failed.")
+            return
+
+        # 6. Create the final region mask
+        region_mask = np.zeros(self.base_image.size[::-1], dtype=np.uint8)
+        if hierarchy is not None:
+            for i, contour in enumerate(new_contours):
+                if hierarchy[0][i][3] == -1: # Outer contour
+                    cv2.drawContours(region_mask, [contour], -1, 255, -1)
+            for i, contour in enumerate(new_contours):
+                if hierarchy[0][i][3] != -1: # Inner (hole) contour
+                    cv2.drawContours(region_mask, [contour], -1, 0, -1)
+        else:
+            cv2.drawContours(region_mask, new_contours, -1, 255, -1)
+
+        # 7. Add the new region to the segmentation data
+        new_label_id = self.segmentation.num_labels + 1
+        self.segmentation.label_map[region_mask == 255] = new_label_id
+        self.segmentation.num_labels += 1
+        
+        # 8. Add new region to the active color group and draw it immediately
+        if not self.active_color_group_id:
+            messagebox.showwarning("No Active Group", "Area created, but no color group was active. Please select a group and click on the new area to color it.")
+        else:
+            active_group = next((g for g in self.color_groups if g['id'] == self.active_color_group_id), None)
+            if active_group:
+                active_group['regions'].add(new_label_id)
+                # Directly draw the new region to ensure it appears
+                mask_L = pil_mask_from_bool(region_mask)
+                color_img = Image.new("RGBA", self.overlay_image.size, active_group['color'])
+                self.overlay_image.paste(color_img, (0, 0), mask_L)
+
+        # 9. Clean up and update UI
+        self.selected_lines.clear()
+        self.status.set(f"Successfully created new Area {new_label_id}.")
+        self._update_region_list()
+        self._refresh_display()
+
+    def _clear_line_selection(self):
+        """Clears the set of selected lines and redraws the canvas."""
+        if not self.selected_lines:
+            return
+        self.selected_lines.clear()
+        self.status.set("Line selection cleared.")
+        self._refresh_display()
+
 
     def _add_new_group(self):
         name = tk.simpledialog.askstring("New Color Group", "Enter a name for the new group:", parent=self)
@@ -534,12 +735,18 @@ class ColorFillPDFApp(tk.Tk):
         self.active_color_group_id = None
         self._update_region_list()
 
-        self.status.set("Segmenting regions...")
+        self.status.set("Segmenting regions and detecting lines...")
         self.update_idletasks()
         
+        # Automatic segmentation for "Fill" mode
         self.segmentation, used_threshold = segment_closed_regions(
             self.base_image, self.dilation_radius, self.invert_lines, threshold
         )
+        # Line detection for "Define by Line" mode
+        self.line_contours, _ = detect_lines(
+            self.base_image, self.dilation_radius, self.invert_lines, threshold
+        )
+        self.selected_lines.clear()
         self.manual_threshold.set(used_threshold)
         mode = "(Auto)" if threshold is None else "(Manual)"
         self.threshold_label.config(text=f"Threshold: {used_threshold} {mode}")
@@ -608,6 +815,26 @@ class ColorFillPDFApp(tk.Tk):
             # Show segmentation preview (base image + all region borders)
             comp = self._generate_segmentation_preview()
 
+        # If in define mode, draw all detected segments and highlight selected ones
+        if self.mode.get() == 'define':
+            draw = ImageDraw.Draw(comp)
+            # 1. Draw all detected segments faintly to show what's clickable
+            if self.line_contours:
+                for contour in self.line_contours:
+                    points = [tuple(p[0]) for p in contour]
+                    if len(points) > 1:
+                        draw.line(points, fill=(0, 191, 255, 100), width=2) # Faint deep sky blue for all segments
+
+            # 2. Draw selected segments brightly on top for emphasis
+            if self.selected_lines:
+                for line_idx in self.selected_lines:
+                    if line_idx < len(self.line_contours):
+                        contour = self.line_contours[line_idx]
+                        points = [tuple(p[0]) for p in contour]
+                        if len(points) > 1:
+                            draw.line(points, fill=(50, 205, 50, 220), width=4) # Bright lime green for selected
+            del draw
+
         self.composited_display = comp
 
         iw, ih = comp.size
@@ -664,8 +891,51 @@ class ColorFillPDFApp(tk.Tk):
     def pick_color(self):
         messagebox.showinfo("Info", "Create a 'New Group' to pick a color, or select an existing group to make it active.")
 
+    def _handle_line_selection(self, event):
+        """Handles clicking on the canvas to select a line in 'define' mode."""
+        if not self.line_contours:
+            self.status.set("No lines detected on this page.")
+            return
+
+        canvas_x, canvas_y = self.canvas.canvasx(event.x), self.canvas.canvasy(event.y)
+        x, y = int(canvas_x / self.zoom_level), int(canvas_y / self.zoom_level)
+        click_point = (x, y)
+
+        # Find the closest contour to the click point
+        min_dist = float('inf')
+        best_idx = -1
+        for i, contour in enumerate(self.line_contours):
+            # pointPolygonTest returns positive (inside), negative (outside), or zero (on the line).
+            # The third argument `True` makes it return the signed distance.
+            dist = cv2.pointPolygonTest(contour, click_point, True)
+            abs_dist = abs(dist)
+            if abs_dist < min_dist:
+                min_dist = abs_dist
+                best_idx = i
+        
+        # Select the contour if the click is reasonably close to it
+        # The threshold (e.g., 10 pixels) can be adjusted
+        if best_idx != -1 and min_dist < 25: # Increased tolerance for easier selection
+            if best_idx in self.selected_lines:
+                self.selected_lines.remove(best_idx)
+                self.status.set(f"Deselected line {best_idx}. Total selected: {len(self.selected_lines)}")
+            else:
+                self.selected_lines.add(best_idx)
+                self.status.set(f"Selected line {best_idx}. Total selected: {len(self.selected_lines)}")
+            self._refresh_display()
+        else:
+            self.status.set("No line found near click.")
+
     def on_canvas_click(self, event):
-        if self.base_image is None or self.segmentation is None: return
+        if self.base_image is None: return
+
+        # Route click based on mode
+        if self.mode.get() == 'define':
+            self._handle_line_selection(event)
+            return
+        
+        # --- Original 'fill' mode logic ---
+        if self.segmentation is None: return
 
         canvas_x, canvas_y = self.canvas.canvasx(event.x), self.canvas.canvasy(event.y)
         x, y = int(canvas_x / self.zoom_level), int(canvas_y / self.zoom_level)

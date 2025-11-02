@@ -454,6 +454,7 @@ class ReportGenerator:
 
         meta_table = Table([
             ['Author:', report_data.get('author', 'N/A'), 'Part Number:', report_data.get('part_number', 'N/A')],
+            ['Department:', report_data.get('department', 'N/A'), '', ''],
             ['Date:', report_data.get('today', 'N/A'), 'Thickness:', report_data.get('thickness', 'N/A')]
         ], colWidths=[1*inch, 2.5*inch, 1*inch, 2.5*inch])
         story.append(meta_table)
@@ -652,6 +653,7 @@ class ReportGenerator:
     
             meta_table = Table([
                 ['Author:', report_data.get('author', 'N/A'), 'Part Number:', report_data.get('part_number', 'N/A')],
+                ['Department:', report_data.get('department', 'N/A'), '', ''],
                 ['Date:', report_data.get('today', 'N/A'), 'Thickness:', report_data.get('thickness', 'N/A')]
             ], colWidths=[1*inch, 2.5*inch, 1*inch, 2.5*inch])
             story.append(meta_table)
@@ -812,8 +814,9 @@ class ReportGenerator:
 
         template_vars = {
             "project_name": self.project_name,
-            "author": metadata.get("author", config.AUTHOR) or config.AUTHOR, "department": config.DEPARTMENT,
-            "report_title": f"{config.REPORT_TITLE} - {self.project_name}",
+            "author": metadata.get("author", config.AUTHOR) or config.AUTHOR,
+            "department": metadata.get("department", config.DEPARTMENT) or config.DEPARTMENT,
+            "report_title": metadata.get("report_title", f"{config.REPORT_TITLE} - {self.project_name}") or f"{config.REPORT_TITLE} - {self.project_name}",
             "logo": final_logo_path,
             "today": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S" if self.debug_mode else "%Y-%m-%d"),
             "part_number": metadata.get("part_number", "N/A"),

@@ -104,9 +104,9 @@ class Pipeline:
                 f"Loaded project '{self.args.project}' with HSV range: {self.project_data['lower_hsv']} - {self.project_data['upper_hsv']}"
             )
 
-    def process_image(self, image_path, part_number=None, thickness=None, author=None):
+    def process_image(self, image_path, part_number=None, thickness=None, author=None, department=None, report_title=None):
         self.image_path = image_path
-        self.metadata_overrides = {"part_number": part_number, "thickness": thickness, "author": author}
+        self.metadata_overrides = {"part_number": part_number, "thickness": thickness, "author": author, "department": department, "report_title": report_title}
 
         # --- Step 1: Extract metadata early to determine output path ---
         self._extract_metadata()
@@ -660,8 +660,10 @@ def run_analysis(args):
                 part_number = getattr(args, 'part_number', None)
                 thickness = getattr(args, 'thickness', None)
                 author = getattr(args, 'author', None)
+                department = getattr(args, 'department', None)
+                report_title = getattr(args, 'report_title', None)
                 pipeline.process_image(
-                    args.image, part_number=part_number, thickness=thickness, author=author
+                    args.image, part_number=part_number, thickness=thickness, author=author, department=department, report_title=report_title
                 )
                 if args.save_state_to:
                     pipeline.save_state(args.save_state_to)

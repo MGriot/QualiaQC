@@ -15,6 +15,7 @@ from src.create_project import create_project
 from src.reporting.generator import ReportGenerator
 from src.sample_manager.dataset_gui import DatasetManagerGUI
 from src.sample_manager.file_placer_gui import ProjectFilePlacerGUI
+from src.config import AUTHOR, DEPARTMENT, REPORT_TITLE
 
 
 class VisualAnalyzerGUI(tk.Tk):
@@ -50,7 +51,9 @@ class VisualAnalyzerGUI(tk.Tk):
         self.image_path_var = tk.StringVar()
         self.part_number_var = tk.StringVar()
         self.thickness_var = tk.StringVar()
-        self.author_var = tk.StringVar()
+        self.author_var = tk.StringVar(value=AUTHOR)
+        self.department_var = tk.StringVar(value=DEPARTMENT)
+        self.report_title_var = tk.StringVar(value=REPORT_TITLE)
         self.color_checker_path_var = tk.StringVar()
         self.color_correction_method_var = tk.StringVar(value="linear")
         self.masking_order_var = tk.StringVar(value="1-2-3")
@@ -114,6 +117,15 @@ class VisualAnalyzerGUI(tk.Tk):
 
         tk.Label(metadata_frame, text="Author:").grid(row=1, column=0, sticky=tk.W, padx=(0, 5), pady=(5,0))
         tk.Entry(metadata_frame, textvariable=self.author_var).grid(row=1, column=1, columnspan=3, sticky=tk.EW, pady=(5,0))
+
+        tk.Label(metadata_frame, text="Department:").grid(row=2, column=0, sticky=tk.W, padx=(0, 5), pady=(5,0))
+        tk.Entry(metadata_frame, textvariable=self.department_var).grid(row=2, column=1, columnspan=3, sticky=tk.EW, pady=(5,0))
+
+        tk.Label(metadata_frame, text="Report Title:").grid(row=3, column=0, sticky=tk.W, padx=(0, 5), pady=(5,0))
+        report_title_entry = tk.Entry(metadata_frame, textvariable=self.report_title_var)
+        report_title_entry.grid(row=3, column=1, columnspan=3, sticky=tk.EW, pady=(5,0))
+        if not self.debug_mode:
+            report_title_entry.config(state=tk.DISABLED)
 
         tk.Button(
             file_frame, text="Select Color Checker", command=self.select_color_checker
@@ -502,6 +514,8 @@ class VisualAnalyzerGUI(tk.Tk):
         args.part_number = self.part_number_var.get()
         args.thickness = self.thickness_var.get()
         args.author = self.author_var.get()
+        args.department = self.department_var.get()
+        args.report_title = self.report_title_var.get()
 
         args.video = None
         args.camera = False
