@@ -31,6 +31,8 @@ class DatasetManagerGUI:
         self.start_x = None
         self.start_y = None
 
+        self.num_clusters_var = tk.StringVar(value="10")
+
         self.load_config()
         self._build_ui()
         self.load_image()
@@ -62,7 +64,14 @@ class DatasetManagerGUI:
         mode_frame = tk.LabelFrame(self.master, text="Sampling Mode")
         mode_frame.pack(pady=5, padx=10, fill=tk.X)
         tk.Radiobutton(mode_frame, text="Add Points", variable=self.mode, value="points", command=self._update_bindings).pack(side=tk.LEFT, padx=10)
-        tk.Radiobutton(mode_frame, text="Select Area (Cluster)", variable=self.mode, value="area", command=self._update_bindings).pack(side=tk.LEFT, padx=10)
+        tk.Radiobutton(mode_frame, text="Delete Point", variable=self.mode, value="delete", command=self._update_bindings).pack(side=tk.LEFT, padx=10)
+        
+        cluster_frame = tk.Frame(mode_frame)
+        cluster_frame.pack(side=tk.LEFT, padx=10)
+        tk.Radiobutton(cluster_frame, text="Select Area (Cluster)", variable=self.mode, value="area", command=self._update_bindings).pack(side=tk.LEFT)
+        tk.Label(cluster_frame, text="Num Clusters:").pack(side=tk.LEFT, padx=(5,0))
+        self.num_clusters_entry = tk.Entry(cluster_frame, textvariable=self.num_clusters_var, width=5)
+        self.num_clusters_entry.pack(side=tk.LEFT)
 
         # --- Action frame ---
         self.action_frame = tk.Frame(self.master)
@@ -88,6 +97,9 @@ class DatasetManagerGUI:
             self.canvas.bind("<ButtonPress-1>", self._on_area_press)
             self.canvas.bind("<B1-Motion>", self._on_area_drag)
             self.canvas.bind("<ButtonRelease-1>", self._on_area_release)
+        elif self.mode.get() == "delete":
+            self.canvas.config(cursor="pirate")
+            self.canvas.bind("<Button-1>", self._handle_delete_click)
 
         # Always have zoom and pan enabled
         self.canvas.bind("<Control-MouseWheel>", self._on_mouse_wheel)
@@ -126,6 +138,8 @@ class DatasetManagerGUI:
     def redraw_canvas(self):
         if self.current_cv_image is None: return
 
+        self.canvas.delete("all")
+
         h, w, _ = self.current_cv_image.shape
         scaled_w, scaled_h = int(w * self.zoom_level), int(h * self.zoom_level)
 
@@ -137,7 +151,6 @@ class DatasetManagerGUI:
         self.current_photo = ImageTk.PhotoImage(image=display_img)
 
         self.canvas.config(scrollregion=(0, 0, scaled_w, scaled_h))
-        self.canvas.delete("all")
         self.canvas.create_image(0, 0, anchor=tk.NW, image=self.current_photo)
         self.draw_points()
 
@@ -167,6 +180,24 @@ class DatasetManagerGUI:
         self.image_points[image_name].append({"x": image_x, "y": image_y, "radius": 7})
         self.draw_points()
 
+    def _handle_delete_click(self, event):
+        image_x = int(self.canvas.canvasx(event.x) / self.zoom_level)
+        image_y = int(self.canvas.canvasy(event.y) / self.zoom_level)
+        image_name = os.path.basename(self.image_paths[self.current_image_index])
+        
+        points = self.image_points.get(image_name, [])
+        if not points:
+            return
+
+        # Find the closest point to the click
+        distances = [np.sqrt((p['x'] - image_x)**2 + (p['y'] - image_y)**2) for p in points]
+        closest_index = np.argmin(distances)
+
+        # If the click is within the radius of the point, delete it
+        if distances[closest_index] <= points[closest_index].get('radius', 7):
+            points.pop(closest_index)
+            self.redraw_canvas()
+
     def _on_area_press(self, event):
         self.start_x = self.canvas.canvasx(event.x)
         self.start_y = self.canvas.canvasy(event.y)
@@ -194,6 +225,15 @@ class DatasetManagerGUI:
             self._perform_clustering(x1_img, y1_img, x2_img, y2_img)
 
     def _perform_clustering(self, x1, y1, x2, y2):
+        try:
+            K = int(self.num_clusters_var.get())
+            if K <= 0:
+                messagebox.showerror("Error", "Number of clusters must be a positive integer.")
+                return
+        except ValueError:
+            messagebox.showerror("Error", "Invalid number of clusters. Please enter an integer.")
+            return
+
         roi = self.current_cv_image[y1:y2, x1:x2]
         if roi.size == 0:
             return
@@ -201,7 +241,6 @@ class DatasetManagerGUI:
         pixels = roi.reshape(-1, 3).astype(np.float32)
         
         criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1.0)
-        K = 10
         _, labels, centers = cv2.kmeans(pixels, K, None, criteria, 10, cv2.KMEANS_RANDOM_CENTERS)
         
         new_points = []
@@ -223,11 +262,13 @@ class DatasetManagerGUI:
         self.canvas.delete("point")
         image_name = os.path.basename(self.image_paths[self.current_image_index])
         points = self.image_points.get(image_name, [])
-        for point in points:
+        for i, point in enumerate(points):
             x, y, r = point['x'], point['y'], point.get('radius', 7)
             # Scale point coordinates to canvas coordinates
             x_canvas, y_canvas = x * self.zoom_level, y * self.zoom_level
-            self.canvas.create_oval(x_canvas - r, y_canvas - r, x_canvas + r, y_canvas + r, fill="red", outline="red", tags="point")
+            # Use a unique tag for each point to be able to identify it
+            tag = f"point_{i}"
+            self.canvas.create_oval(x_canvas - r, y_canvas - r, x_canvas + r, y_canvas + r, fill="red", outline="red", tags=("point", tag))
 
     def clear_points(self):
         image_name = os.path.basename(self.image_paths[self.current_image_index])
