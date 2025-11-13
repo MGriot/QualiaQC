@@ -1,55 +1,56 @@
-**Planning the code and GUI**I'm designing a Tkinter-based solution for loading PDFs, detecting regions using OpenCV or PIL, and enabling users to fill those regions interactively on a canvas.
-Below is a **single-file, end‑to‑end Tkinter app** that lets you:
+# PDF/Image Region Color & Vector Editor
 
-- **Open a PDF** (line art / black & white drawing)
-- **Click to “paint bucket” fill** any closed area bounded by lines
-- **Maintain fills as an overlay** (non-destructively)
-- **Export**:
-  - The **currently selected region** as a **separate transparent PNG “layer”**
-  - **All colored regions** as separate transparent PNGs
-  - The **composited result** (original + overlay) as a PNG
-  - *(optional)* The current region as a one‑page **PDF** with transparent image (via PyMuPDF)
-
-This approach works by rasterizing the PDF page to an image, identifying **closed regions** using connected-components on the **non-line** areas (lines are detected via automated thresholding and dilation), and then mapping clicks to region labels. No OpenCV is required.
+This document describes the features and underlying mechanisms of the interactive GUI for editing and coloring regions in PDFs and images.
 
 ---
 
 ## ✅ What you’ll need
 
 ```bash
-pip install pymupdf pillow numpy scipy
+pip install pymupdf pillow numpy opencv-python
 ```
 
-> **Note**: No OpenCV required. Uses `pymupdf`, `Pillow`, `numpy`, and `scipy.ndimage`.
+> **Note**: This tool heavily leverages `pymupdf`, `Pillow`, `numpy`, and `opencv-python`.
 
 ---
 
-## 💻 The Code (save as `drawing_tools/gui.py`)
-🧠 How it works (under the hood)
-Render: Uses PyMuPDF to render the selected PDF page at 2× scale for sharper edges.
-Detect lines & regions:
-Converts to grayscale and applies Otsu thresholding to detect dark lines.
-Dilates lines by a tunable amount to seal small gaps, preventing “leaks.”
-Inverts to get the fillable areas.
-Runs 8-connected components labeling on fillable regions ⇒ region map.
-Marks border-touching regions as background (not fillable).
-Click-to-fill:
-Maps your click to the underlying region ID and paints that area onto a transparent overlay using your chosen color (RGBA with alpha).
-The display is a live composite: base image + overlay.
-Export:
-Region PNG: A transparent image with only that region colored.
-All regions: Batch-exports every colored region.
-Composite PNG: Saves the full page with overlay applied.
-Region PDF: Embeds the transparent PNG in a single‑page PDF (same pixel dimensions).
-🧩 Notes, Tips & Adjustments
-Gaps in lines? Use Options → Set line dilation (increase from 2 to 3–4) to seal tiny leaks.
-White-on-black drawings? Use Options → Toggle invert lines if your source has light lines on dark background.
-Performance: Very large pages may take a few seconds to segment. Rendering at 2× is a balance between precision and speed—bump to 3× if needed.
-Vector output: Export is image-based (transparent PNG layer). If you need true vector extraction (e.g., SVG paths), we can extend this by tracing region boundaries (Moore neighbor tracing) and writing SVG—happy to add that if you need it.
-▶️ Usage
-Run: python -m src.drawing_tools.gui
-File → Open PDF…
-Click inside any closed area to fill it.
-Edit → Pick Color to change fill color.
-Export via File menu or toolbar buttons.
-If you want me to extend this with SVG export (vectorized regions) or zoom/pan, say the word and I’ll add it.
+## 💻 The Code (save as `drawing_tools/gui_main.py`)
+
+### 🧠 How it works (under the hood)
+
+*   **Render**: Uses PyMuPDF to render selected PDF pages at 2× scale for sharper edges. Images are loaded directly.
+*   **Detect lines & regions**:
+    *   Converts the image to grayscale.
+    *   For **line detection**, it uses the **Line Segment Detector (LSD)** from OpenCV for fast and accurate vector extraction. This replaces older, less precise skeletonization methods.
+    *   For **region segmentation**, it applies Otsu thresholding to create a binary mask of lines. These lines are then optionally dilated by a tunable amount to seal small gaps, preventing “leaks.”
+    *   The inverted mask (fillable areas) is then processed using **OpenCV's connected components labeling** to identify and map all closed regions.
+    *   Regions touching the image border are marked as background (not fillable).
+*   **Click-to-fill**:
+    *   Maps your click to the underlying region ID and paints that area onto a transparent overlay using your chosen color (RGBA with alpha).
+    *   The display is a live composite: base image + overlay.
+*   **Vector Editing**: Allows selection, grouping, transformation (move, rotate), and connection of detected line segments. New fillable areas can be created from selected vectors, with an option to define holes.
+*   **Export**:
+    *   Region PNG: A transparent image with only that region colored.
+    *   All regions: Batch-exports every colored region.
+    *   Composite PNG: Saves the full page with overlay applied.
+    *   Region PDF: Embeds the transparent PNG in a single‑page PDF (same pixel dimensions).
+
+### 🧩 Notes, Tips & Adjustments
+
+*   **Gaps in lines?** Use `Options → Set line dilation` (increase from 2 to 3–4) to seal tiny leaks before segmentation.
+*   **White-on-black drawings?** Use `Options → Toggle invert lines` if your source has light lines on a dark background.
+*   **Performance**: Significant improvements have been made to line detection and region segmentation using optimized OpenCV algorithms (LSD and `connectedComponents`), making the process much faster and more precise.
+*   **Background Visibility**: In "Edit Vectors" mode, use the "Show Background" checkbox in the toolbar to toggle the visibility of the original image/PDF, allowing you to focus solely on the vectors.
+*   **Custom Colors**:
+    *   `Options → Set Vector Color...`: Customize the colors used for default, selected, and grouped vector lines.
+    *   `Options → Set Fill Opacity...`: Set the default opacity (alpha value) for new fill groups.
+    *   In the "Color Groups" panel, select a group and click "Set Color" to change its specific color and opacity.
+
+### ▶️ Usage
+
+1.  Run: `python -m src.gui` (or `python src/drawing_tools/gui_main.py` if running directly)
+2.  `File → Open PDF...` or `File → Open Image...`
+3.  Switch to "Fill Area" mode and click inside any closed area to fill it.
+4.  Switch to "Edit Vectors" mode to select, group, and manipulate detected lines.
+5.  Customize colors and other options via the `Edit` or `Options` menus, or directly from the UI panels.
+6.  Export via `File` menu.

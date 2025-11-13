@@ -96,3 +96,48 @@ The File Placer helps you copy required files (like reference images and drawing
 *   **Add Images**: Select one or more training images from anywhere on your computer to copy them into the project.
 *   **Preview**: See thumbnails of all training images currently in the project.
 *   **Delete**: A "Delete" button next to each image allows for easy removal.
+
+---
+
+## 5. PDF Region Color & Vector Editor
+
+This is an interactive tool for segmenting regions, detecting lines, and applying color fills to PDF pages or image files.
+
+### Launching the Editor
+
+The editor is integrated into the main GUI.
+
+### Key Features
+
+*   **Open Files**: Use `File → Open PDF...` to load multi-page PDF documents, or `File → Open Image...` to load single image files (PNG, JPG, BMP, GIF).
+*   **Interaction Modes**:
+    *   **Fill Area**: Click inside closed regions to apply a color fill.
+    *   **Edit Vectors**: Select, group, move, rotate, connect, and delete detected line segments.
+*   **Color Groups**:
+    *   Organize filled regions into named groups with customizable colors.
+    *   `New`: Create a new color group.
+    *   `Set Color`: Change the color and opacity of the currently selected group.
+    *   `Rename`: Rename the selected group.
+    *   `Delete`: Delete the selected group and its associated fills.
+    *   `Remove Selected Region(s)`: Remove specific filled areas from their groups.
+    *   `Merge Selected Regions`: Combine multiple adjacent filled regions into one.
+*   **Vector Actions (in Edit Vectors mode)**:
+    *   `Create Area from Selection`: Generate a new fillable region from selected line segments, with an option to `Create with Holes`.
+    *   `Connect Endpoints`: Automatically connect nearby endpoints of selected vectors to form closed shapes.
+    *   `Delete Selection`: Remove selected vector lines.
+    *   `Clear Selection`: Deselect all lines.
+    *   `Group Selection` / `Ungroup Selection`: Organize vectors into logical groups.
+    *   `Transform Selection`: Move or rotate selected vectors by specified amounts.
+*   **Display Options**:
+    *   `Show Background`: Toggle the visibility of the original PDF page or image. When off, only the vectors and overlays are shown on a black background.
+    *   `Show Overlays`: Toggle the visibility of all colored fill regions.
+*   **Customization (Options Menu)**:
+    *   `Set Vector Color...`: Customize the colors used for default, selected, and grouped vector lines.
+    *   `Set Fill Opacity...`: Set the default opacity (alpha value, 0-255) for newly created fill groups.
+*   **Segmentation Settings**:
+    *   Adjust the `Threshold` for line detection (manual or auto).
+    *   `Set line dilation...`: Control how much lines are thickened to close gaps.
+    *   `Toggle invert lines (white-on-black)`: Adapt to documents with light lines on a dark background.
+*   **Export Options**:
+    *   Export selected regions, all colored regions, or the composited view as PNGs.
+    *   Export a single selected region as a PDF.

@@ -36,23 +36,25 @@ def color_tuple_to_rgba(
     r, g, b = color_tuple
     return (int(r), int(g), int(b), int(alpha))
 
-def draw_lines_on_image(img, line_contours, selected_lines=None, vector_groups=None):
+def draw_lines_on_image(img, line_contours, selected_lines=None, vector_groups=None, colors=None):
     """Draws all detected line segments and highlights selected and grouped ones."""
     if selected_lines is None: selected_lines = set()
     if vector_groups is None: vector_groups = []
+    if colors is None:
+        colors = {
+            "default": (0, 191, 255, 100),   # Faint deep sky blue
+            "selected": (50, 205, 50, 220),  # Bright lime green
+            "grouped": (255, 255, 0, 150),    # Yellow
+        }
     
     draw = ImageDraw.Draw(img)
     
     # Create a map of index to group color
-    group_colors = [
-        (128, 0, 128, 150), (0, 128, 128, 150), (128, 128, 0, 150), 
-        (0, 0, 128, 150), (128, 0, 0, 150), (0, 128, 0, 150)
-    ]
     line_to_group_color = {}
-    for i, group in enumerate(vector_groups):
-        color = group_colors[i % len(group_colors)]
+    group_color = colors.get("grouped", (255, 255, 0, 150))
+    for group in vector_groups:
         for line_idx in group:
-            line_to_group_color[line_idx] = color
+            line_to_group_color[line_idx] = group_color
 
     # Draw all segments
     for i, contour in enumerate(line_contours):
@@ -62,7 +64,7 @@ def draw_lines_on_image(img, line_contours, selected_lines=None, vector_groups=N
         
         width = 2
         # Default color
-        color = (0, 191, 255, 100) # Faint deep sky blue
+        color = colors.get("default", (0, 191, 255, 100))
         
         # Group color
         if i in line_to_group_color:
@@ -70,7 +72,7 @@ def draw_lines_on_image(img, line_contours, selected_lines=None, vector_groups=N
         
         # Selection color (overrides all others)
         if i in selected_lines:
-            color = (50, 205, 50, 220) # Bright lime green
+            color = colors.get("selected", (50, 205, 50, 220))
             width = 4
             
         draw.line(pts, fill=color, width=width)

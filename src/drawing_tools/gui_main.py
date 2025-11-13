@@ -56,12 +56,22 @@ class ColorFillPDFApp(tk.Tk):
         self.zoom_level: float = 1.0
 
         # UI-linked State Variables
+        self.background_visible = tk.BooleanVar(value=True)
+        self.background_visible.trace_add("write", self._refresh_display)
         self.highlights_visible = tk.BooleanVar(value=True)
         self.manual_threshold = tk.IntVar(value=127)
         self.vector_move_x = tk.StringVar(value="0")
         self.vector_move_y = tk.StringVar(value="0")
         self.vector_rotate_angle = tk.StringVar(value="0")
         self.create_with_holes = tk.BooleanVar(value=False)
+
+        # Color and Opacity State
+        self.vector_colors = {
+            "default": (255, 0, 255, 255),  # Magenta
+            "selected": (0, 255, 0, 255),   # Green
+            "grouped": (255, 255, 0, 255),  # Yellow
+        }
+        self.overlay_alpha = tk.IntVar(value=150)
 
         # Unified mode and selection state
         self.mode = tk.StringVar(value="fill")
@@ -131,6 +141,7 @@ class ColorFillPDFApp(tk.Tk):
         btn_frame = tk.Frame(group_frame)
         btn_frame.pack(fill=tk.X)
         tk.Button(btn_frame, text="New", command=self._add_new_group).pack(side=tk.LEFT, expand=True, fill=tk.X)
+        tk.Button(btn_frame, text="Set Color", command=self._change_group_color).pack(side=tk.LEFT, expand=True, fill=tk.X)
         tk.Button(btn_frame, text="Rename", command=self._rename_selected_group).pack(side=tk.LEFT, expand=True, fill=tk.X)
         tk.Button(btn_frame, text="Delete", command=self._delete_selected_group).pack(side=tk.LEFT, expand=True, fill=tk.X)
         tree_container = tk.Frame(self.fill_tools_frame)
@@ -197,6 +208,7 @@ class ColorFillPDFApp(tk.Tk):
         menubar = tk.Menu(self)
         filemenu = tk.Menu(menubar, tearoff=0)
         filemenu.add_command(label="Open PDF...", command=self.open_pdf)
+        filemenu.add_command(label="Open Image...", command=self.open_image)
         filemenu.add_separator()
         filemenu.add_command(label="Export Selected Region(s) as PNG...", command=self.export_selected_regions_png)
         filemenu.add_command(label="Export ALL colored regions as PNGs...", command=self.export_all_regions_pngs)
@@ -216,16 +228,23 @@ class ColorFillPDFApp(tk.Tk):
         options = tk.Menu(menubar, tearoff=0)
         options.add_command(label="Set line dilation...", command=self.set_dilation)
         options.add_command(label="Toggle invert lines (white-on-black)", command=self.toggle_invert_lines)
+        options.add_separator()
+        options.add_command(label="Set Vector Color...", command=self._set_vector_color)
+        options.add_command(label="Set Fill Opacity...", command=self._set_overlay_alpha)
         menubar.add_cascade(label="Options", menu=options)
         self.config(menu=menubar)
 
     def _build_toolbar(self):
         toolbar = tk.Frame(self)
         tk.Button(toolbar, text="Open PDF...", command=self.open_pdf).pack(side=tk.LEFT, padx=2, pady=4)
-        tk.Button(toolbar, text="Prev Page", command=self.prev_page).pack(side=tk.LEFT, padx=2, pady=4)
-        tk.Button(toolbar, text="Next Page", command=self.next_page).pack(side=tk.LEFT, padx=2, pady=4)
+        tk.Button(toolbar, text="Open Image...", command=self.open_image).pack(side=tk.LEFT, padx=2, pady=4)
+        self.prev_page_btn = tk.Button(toolbar, text="Prev Page", command=self.prev_page, state=tk.DISABLED)
+        self.prev_page_btn.pack(side=tk.LEFT, padx=2, pady=4)
+        self.next_page_btn = tk.Button(toolbar, text="Next Page", command=self.next_page, state=tk.DISABLED)
+        self.next_page_btn.pack(side=tk.LEFT, padx=2, pady=4)
         tk.Button(toolbar, text="Zoom In", command=self._zoom_in).pack(side=tk.LEFT, padx=2, pady=4)
         tk.Button(toolbar, text="Zoom Out", command=self._zoom_out).pack(side=tk.LEFT, padx=2, pady=4)
+        tk.Checkbutton(toolbar, text="Show Background", variable=self.background_visible).pack(side=tk.LEFT, padx=5, pady=4)
         tk.Checkbutton(toolbar, text="Show Overlays", variable=self.highlights_visible, command=self._refresh_display).pack(side=tk.LEFT, padx=2, pady=4)
         toolbar.pack(fill=tk.X)
 
@@ -302,13 +321,17 @@ class ColorFillPDFApp(tk.Tk):
         
         # --- Use the appropriate method based on the checkbox ---
         if self.create_with_holes.get():
-            # Advanced method: Use hierarchy to create holes
-            new_fill_contours, hierarchy = cv2.findContours(closed_line_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+            # Advanced method: Use hierarchy to create holes by inverting the mask
+            inverted_closed_line_mask = cv2.bitwise_not(closed_line_mask)
+            new_fill_contours, hierarchy = cv2.findContours(inverted_closed_line_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
             if not new_fill_contours:
                 messagebox.showerror("Error", "Could not form a closed area from the selection.")
                 return
             
             region_mask = np.zeros(self.base_image.size[::-1], dtype=np.uint8)
+            # With an inverted mask, the first level (0) is the background.
+            # Levels 1, 3, 5... are our primary shapes to fill.
+            # Levels 2, 4, 6... are holes within those shapes.
             for i, contour in enumerate(new_fill_contours):
                 level = 0
                 parent_idx = hierarchy[0][i][3]
@@ -316,9 +339,9 @@ class ColorFillPDFApp(tk.Tk):
                     level += 1
                     parent_idx = hierarchy[0][parent_idx][3]
                 
-                if level % 2 == 0: # Outer contours
+                if level % 2 == 1: # Fill odd levels
                     cv2.drawContours(region_mask, [contour], -1, 255, -1) # Fill
-                else: # Inner contours (holes)
+                elif level > 0 and level % 2 == 0: # Erase even, non-zero levels
                     cv2.drawContours(region_mask, [contour], -1, 0, -1) # Erase (hole)
         else:
             # Simple method: Fill the largest contour
@@ -470,7 +493,7 @@ class ColorFillPDFApp(tk.Tk):
     def _sync_vector_changes(self):
         messagebox.showinfo("Info", "To apply vector changes, please use the segmentation controls (e.g., 'Reset to Auto') to re-process the page.")
 
-    # ---------- PDF & Segmentation ----------
+    # ---------- PDF & Image Loading / Segmentation ----------
     def open_pdf(self):
         path = filedialog.askopenfilename(title="Open PDF", filetypes=[("PDF files", "*.pdf")])
         if not path: return
@@ -484,53 +507,110 @@ class ColorFillPDFApp(tk.Tk):
         self.status.set(f"Loaded: {os.path.basename(path)} | Pages: {self.page_count}")
         self._load_page(self.page_index)
 
-    def _load_page(self, index: int, threshold: Optional[int] = None):
-        if not self.pdf_doc or not (0 <= index < self.pdf_doc.page_count): return
-        page = self.pdf_doc.load_page(index)
-        mat = fitz.Matrix(2.0, 2.0)
-        pix = page.get_pixmap(matrix=mat, alpha=False)
-        self.base_image = pil_from_pixmap(pix).convert("RGB")
+    def open_image(self):
+        path = filedialog.askopenfilename(
+            title="Open Image",
+            filetypes=[
+                ("Image files", "*.png *.jpg *.jpeg *.bmp *.gif"),
+                ("All files", "*.*")
+            ]
+        )
+        if not path: return
+        try:
+            image = Image.open(path)
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to open image:\n{e}")
+            return
+        
+        self.pdf_doc = None
+        self.page_count = 1
+        self.page_index = 0
+        self.status.set(f"Loaded: {os.path.basename(path)}")
+        self._process_image_data(image)
+
+    def _process_image_data(self, image: Image.Image, threshold: Optional[int] = None):
+        """Common logic to process a PIL image for segmentation and display."""
+        self.base_image = image.convert("RGB")
         self.color_groups.clear()
         self.active_color_group_id = None
         self._update_region_list()
         self.status.set("Segmenting regions and detecting lines...")
         self.update_idletasks()
-        self.segmentation, used_threshold = segment_closed_regions(self.base_image, self.dilation_radius, self.invert_lines, threshold)
+
+        self.segmentation, used_threshold = segment_closed_regions(
+            self.base_image, self.dilation_radius, self.invert_lines, threshold
+        )
         self.line_contours, _ = detect_lines(self.base_image)
         self.selected_line_indices.clear()
         self.vector_groups.clear()
         self.manual_threshold.set(used_threshold)
+
         mode = "(Auto)" if threshold is None else "(Manual)"
         self.threshold_label.config(text=f"Threshold: {used_threshold} {mode}")
+        
         num_regions = self.segmentation.num_labels
-        self.status.set(f"Page {self.page_index + 1}/{self.page_count} | Regions: {num_regions} | Threshold: {used_threshold} {mode}")
+        if self.pdf_doc:
+            status_text = f"Page {self.page_index + 1}/{self.page_count} | Regions: {num_regions} | Threshold: {used_threshold} {mode}"
+        else:
+            status_text = f"Image Loaded | Regions: {num_regions} | Threshold: {used_threshold} {mode}"
+        
+        self.status.set(status_text)
+        self._update_page_nav_buttons()
         self._redraw_all_overlays()
         self._refresh_display()
+
+    def _load_page(self, index: int, threshold: Optional[int] = None):
+        if not self.pdf_doc or not (0 <= index < self.pdf_doc.page_count): return
+        self.page_index = index
+        page = self.pdf_doc.load_page(index)
+        mat = fitz.Matrix(2.0, 2.0)  # Render at high resolution
+        pix = page.get_pixmap(matrix=mat, alpha=False)
+        image = pil_from_pixmap(pix)
+        self._process_image_data(image, threshold)
 
     def _resegment_page(self, manual: bool):
         if self.base_image is None: return
         if not messagebox.askyesno("Confirm Resegment", "This will clear all colored regions and vector edits on the current page. Proceed?"):
             return
+        
         threshold = self.manual_threshold.get() if manual else None
-        self._load_page(self.page_index, threshold=threshold)
+        
+        if self.pdf_doc:
+            self._load_page(self.page_index, threshold=threshold)
+        else:
+            # For a plain image, we just re-process it
+            self._process_image_data(self.base_image, threshold)
+
+    def _update_page_nav_buttons(self):
+        prev_state = tk.NORMAL if self.page_index > 0 else tk.DISABLED
+        next_state = tk.NORMAL if self.page_index < self.page_count - 1 else tk.DISABLED
+        
+        if hasattr(self, 'prev_page_btn'):
+            self.prev_page_btn.config(state=prev_state)
+        if hasattr(self, 'next_page_btn'):
+            self.next_page_btn.config(state=next_state)
 
     def prev_page(self):
         if self.pdf_doc and self.page_index > 0:
-            self.page_index -= 1
-            self._load_page(self.page_index)
+            self._load_page(self.page_index - 1)
 
     def next_page(self):
         if self.pdf_doc and self.page_index < self.page_count - 1:
-            self.page_index += 1
-            self._load_page(self.page_index)
+            self._load_page(self.page_index + 1)
 
     # ---------- Display handling ----------
     def _refresh_display(self, *_):
         if self.base_image is None: return
-        base_rgba = self.base_image.convert("RGBA")
+
+        if self.background_visible.get():
+            base_rgba = self.base_image.convert("RGBA")
+        else:
+            # Create a black background when the original image is hidden
+            base_rgba = Image.new("RGBA", self.base_image.size, (0, 0, 0, 255))
+
         comp = alpha_composite(base_rgba, self.overlay_image)
         if self.highlights_visible.get():
-            draw_lines_on_image(comp, self.line_contours, self.selected_line_indices, self.vector_groups)
+            draw_lines_on_image(comp, self.line_contours, self.selected_line_indices, self.vector_groups, self.vector_colors)
         self.composited_display = comp
         iw, ih = comp.size
         scaled_iw = int(iw * self.zoom_level)
@@ -655,7 +735,56 @@ class ColorFillPDFApp(tk.Tk):
         self._update_region_list()
         self.status.set(f"Added Region {label} to group '{active_group['name']}'.")
 
-    # ---------- Methods from original class (mostly unchanged) ----------
+    # ---------- Customization and UI Methods ----------
+    def _set_vector_color(self):
+        # This allows changing the default, selected, and grouped colors sequentially.
+        original_colors = self.vector_colors.copy()
+        for key in ["default", "selected", "grouped"]:
+            prompt = f"Pick a color for '{key}' vector lines"
+            initial_color = self.vector_colors[key]
+            color_info = colorchooser.askcolor(title=prompt, initialcolor=initial_color)
+            if not color_info or not color_info[0]:
+                messagebox.showinfo("Info", f"Vector color setting for '{key}' was cancelled. No colors were changed.")
+                self.vector_colors = original_colors # Revert all changes if any step is cancelled
+                return
+            r, g, b = color_info[0]
+            self.vector_colors[key] = (int(r), int(g), int(b), 255)
+        self._refresh_display()
+
+    def _set_overlay_alpha(self):
+        alpha = simpledialog.askinteger("Default Opacity", "Enter default opacity for new fills (0-255):", initialvalue=self.overlay_alpha.get(), minvalue=0, maxvalue=255, parent=self)
+        if alpha is not None:
+            self.overlay_alpha.set(alpha)
+            messagebox.showinfo("Info", f"Default fill opacity set to {alpha}. This will apply to new groups.")
+
+    def _change_group_color(self):
+        if not self.region_tree: return
+        selection = self.region_tree.selection()
+        if not selection or not selection[0].startswith("group_"):
+            messagebox.showwarning("Warning", "Please select exactly one group folder to change its color.")
+            return
+        
+        group_id = selection[0]
+        group = next((g for g in self.color_groups if g['id'] == group_id), None)
+        if not group: return
+
+        initial_color = group['color'][:3]
+        initial_alpha = group['color'][3]
+
+        color_info = colorchooser.askcolor(title=f"Pick new color for '{group['name']}'", initialcolor=initial_color)
+        if not color_info or not color_info[0]: return
+        r, g, b = color_info[0]
+
+        alpha = simpledialog.askinteger("Overlay Opacity", "Enter opacity (0-255):", initialvalue=initial_alpha, minvalue=0, maxvalue=255, parent=self)
+        if alpha is None: alpha = initial_alpha
+
+        group['color'] = (int(r), int(g), int(b), alpha)
+        
+        self._update_region_list()
+        self._redraw_all_overlays()
+        self._refresh_display()
+
+    # ---------- Core Application Logic ----------
     def _create_area_from_selection(self):
         if len(self.selected_line_indices) < 1:
             messagebox.showwarning("Selection Error", "Please select at least one line segment.")
@@ -687,20 +816,25 @@ class ColorFillPDFApp(tk.Tk):
         closed_line_mask = cv2.morphologyEx(line_mask, cv2.MORPH_CLOSE, kernel, iterations=2)
         
         if self.create_with_holes.get():
-            new_contours, hierarchy = cv2.findContours(closed_line_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+            inverted_closed_line_mask = cv2.bitwise_not(closed_line_mask)
+            new_contours, hierarchy = cv2.findContours(inverted_closed_line_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
             if not new_contours:
                 messagebox.showerror("Error", "Could not form a closed area from the selection.")
                 return
             region_mask = np.zeros(self.base_image.size[::-1], dtype=np.uint8)
+            # With an inverted mask, the first level (0) is the background.
+            # Levels 1, 3, 5... are our primary shapes to fill.
+            # Levels 2, 4, 6... are holes within those shapes.
             for i, contour in enumerate(new_contours):
                 level = 0
                 parent_idx = hierarchy[0][i][3]
                 while parent_idx != -1:
                     level += 1
                     parent_idx = hierarchy[0][parent_idx][3]
-                if level % 2 == 0: # Outer contours
+                
+                if level % 2 == 1:  # Fill odd levels (shapes)
                     cv2.drawContours(region_mask, [contour], -1, 255, -1)
-                else: # Inner contours (holes)
+                elif level > 0 and level % 2 == 0:  # Erase even levels (holes)
                     cv2.drawContours(region_mask, [contour], -1, 0, -1)
         else:
             new_contours, _ = cv2.findContours(closed_line_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -732,7 +866,7 @@ class ColorFillPDFApp(tk.Tk):
         color_info = colorchooser.askcolor(title=f"Pick color for '{name}'")
         if not color_info or not color_info[0]: return
         r, g, b = color_info[0]
-        rgba = (int(r), int(g), int(b), 150)
+        rgba = (int(r), int(g), int(b), self.overlay_alpha.get())
         group_id = f"group_{time.time()}" 
         new_group = {"id": group_id, "name": name, "color": rgba, "regions": set()}
         self.color_groups.append(new_group)
